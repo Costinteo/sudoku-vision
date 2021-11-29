@@ -1,24 +1,39 @@
 #!/bin/python3
 import cv2 as cv
 import numpy as np
+import sys
+import getopt
+import os
 
-# observable means of numbered cells were surely greater than 20
+# observable means of numbered cells were surely greater than 15
 # observable means of empty cells with noise (after erosion) were less than 1
-# we pick a safety net (> 20) just in case
-NUMBER_CELL_MIN_MEAN = 20
+# we pick a safety net (> 15) just in case
+NUMBER_CELL_MIN_MEAN = 15
 
 VERBOSE = False
+CLASSIC = "classic"
+JIGSAW = "jigsaw"
 
-# return an image preprocessed
+def printInfo(infoString):
+    if not VERBOSE:
+        return
+    print(infoString)
+
+# return a preprocessed image
 def preprocessed(img):
     # getting rid of noise
+    # using Gausian with 9x9 kernel
     blur = cv.GaussianBlur(img.copy(), (9, 9), 0)
-    thresh = cv.adaptiveThreshold(blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2)
-    inverted = cv.bitwise_not(thresh)
+    # adaptive thresholding of blocksize 11
+    thresh = 255 - cv.adaptiveThreshold(blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2)
     
     # dilate after Gaussian thresholding
-    kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]], np.uint8)
-    dilated = cv.dilate(inverted, kernel)
+    # we use a cross-shaped kernel to not dilate more than necessary
+    # I've tried a square shaped kernel and it left more noise than I'd like
+    crossKernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
+    # squareKernel = np.ones((3, 3), np.uint8)
+    dilated = cv.dilate(thresh, crossKernel)
+    
     return dilated
 
 # function returns largest contour from an image
@@ -88,8 +103,10 @@ def isCellEmpty(cell):
     for i, line in enumerate(cutCell):
         finalCell[i] = line[cutWidth:cellWidth - cutWidth]
     
-    # erode the resulting cell, to make sure we get rid of any remaining noise
-    finalCell = cv.erode(finalCell, np.ones((2, 2), np.uint8))
+    # apply Opening on the final cell one more time to get rid of ANY possible noise
+    # we SHOULD be left with the digit only
+    # hopefully this isn't overkill
+    finalCell = cv.morphologyEx(finalCell, cv.MORPH_OPEN, np.ones((2, 2), np.uint8))
     
     # now we can accurately determine if a cell is empty or not using its mean
     # we take a safety margin of NUMBER_CELL_MIN_MEAN, just in case there's any noise left
@@ -119,9 +136,8 @@ def extractCells(img):
         for j in range(9):
             cell = np.zeros((cellHeight, cellWidth), np.uint8)
             for k in range(cellHeight):
-                cell[k] = img[cellHeight * i + k][cellWidth * j: cellWidth * (j + 1)]
+                cell[k] = img[cellHeight * i + k][cellWidth * j : cellWidth * (j + 1)]
             cells[i][j] = cell
-
     return cells
 
 def isCorrectlyPredicted(predictedCells, truthPath):
@@ -135,7 +151,11 @@ def isCorrectlyPredicted(predictedCells, truthPath):
     Returns:
     bool: True if correct, False if incorrect
     """
-    truthCells = open(truthPath, "r").readlines()
+    try:
+        truthCells = open(truthPath, "r").readlines()
+    except:
+        print("Ground truth path incorrect!")
+        exit(1)
     for i in range(len(predictedCells)):
         for j in range(len(predictedCells[i])):
             if predictedCells[i][j] != ord(truthCells[i][j]):
@@ -150,25 +170,24 @@ def isCorrectlyPredicted(predictedCells, truthPath):
 def showImg(img, title="default", timer=0):
     cv.imshow(title, img)
     cv.waitKey(timer)
-    cv.destroyAllWindows()       
+    cv.destroyAllWindows()
 
-def sudokuVision(inputPath, outputPath, truthPath=None):
-    if VERBOSE:
-        print(f"Running {inputPath} through Sudoku Vision...")
+def sudokuVision(inputPath, outputPath, truthPath=None, mode=CLASSIC):
+    print(f"Running {inputPath} through Sudoku Vision...")
     
+
+    img = cv.imread(inputPath, cv.IMREAD_GRAYSCALE)
+
     try:
-        img = cv.imread(inputPath, cv.IMREAD_GRAYSCALE)
+        img = cv.resize(img, (0, 0), fx=0.2, fy=0.2)
     except:
         print("Unexpected error occured. Make sure you passed a path to an image as argument!")
-    
-    img = cv.resize(img, (0, 0), fx=0.2, fy=0.2)
+        exit(1)
 
-    if VERBOSE:
-        print("Preprocessing image...")
+    printInfo("Preprocessing image...")
     procImg = preprocessed(img)
 
-    if VERBOSE:
-        print("Approximating polygon...")
+    printInfo("Approximating polygon...")
     # we get the largest contour in procImg, which will be the sudoku puzzle
     largestContour = getLargestContour(procImg)
     arc = cv.arcLength(largestContour, True)
@@ -180,8 +199,7 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     for arr in poly:
         corners.append(list(arr[0]))
     
-    if VERBOSE:
-        print("Grabbing corners...")
+    printInfo("Grabbing corners...")
     # we call a function to order the corners clockwise, even if picture is rotated
     topLeft, topRight, botLeft, botRight = getCornersOrdered(corners, np.shape(procImg))
 
@@ -201,27 +219,40 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     # of the new warped image
     heightWarp = max(int(heightLeft), int(heightRight))
 
-    newDimensions = np.array([[0, 0], [widthWarp - 1, 0], [widthWarp - 1, heightWarp - 1], [0, heightWarp - 1]], np.float32)
-    # corners have to be ordered clockwise for the warp
+    # contains the four corners to which to warp
+    newDimensions = np.array([[0, 0], [widthWarp, 0], [widthWarp, heightWarp], [0, heightWarp]], np.float32)
+    # corners have to be ordered clockwise (like above) for the warp
     ordCornersArr = np.array([topLeft, topRight, botRight, botLeft], np.float32)
 
-    if VERBOSE:
-        print("Cropping to sudoku puzzle...")
+    printInfo("Cropping to sudoku puzzle...")
     # needed for warped perspective
-    grid = cv.getPerspectiveTransform(ordCornersArr, newDimensions)
-    warpedImg = cv.warpPerspective(img, grid, (widthWarp, heightWarp))
+    perspective = cv.getPerspectiveTransform(ordCornersArr, newDimensions)
+    warpedImg = cv.warpPerspective(img, perspective, (widthWarp, heightWarp))
 
     # finally threshold and invert the warped image
+    # large blocksize gets rid of more noise
     # now we finally have the sudoku puzzle only
-    warpedImg = cv.bitwise_not(cv.adaptiveThreshold(warpedImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 101, 1))
+    warpedImg = 255 - cv.adaptiveThreshold(warpedImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 201, 1)
+    
+    #showImg(255 -warpedImg)
 
-    if VERBOSE:
-        print("Extracting cells...")
+    printInfo("Extracting cells...")
     # extract the cells
     cells = extractCells(warpedImg)
+    
+    mode = JIGSAW
+    if mode != CLASSIC:
 
-    if VERBOSE:
-        print(f"Writing to file {outputPath}...")
+        dilated = cv.dilate(warpedImg, np.ones((2, 2), np.uint8))
+        kernel = np.ones((6, 1), np.uint8)
+        # erode vertical lines then horizontal lines
+        eroded = cv.erode(dilated, kernel)
+        eroded = cv.erode(eroded, np.transpose(kernel))
+
+        
+
+        return
+    printInfo(f"Writing to file {outputPath}...")
     outputFile = open(outputPath, "w")
     predictedValues = np.empty((9, 9), np.uint8)
     # iterate through the cells
@@ -230,14 +261,19 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
         for j in range(len(cells[i])):
             outputFile.write("o" if isCellEmpty(cells[i][j]) else "x")
             predictedValues[i][j] = ord("o") if isCellEmpty(cells[i][j]) else ord("x")
+            #showImg(255 - cells[i][j])
         outputFile.write("\n")
     
     if truthPath:
         print("Correct!" if isCorrectlyPredicted(predictedValues, truthPath) else "Incorrect!")
-    if VERBOSE:
-        print("Done!")
-
+    printInfo("Done!")
 
 if __name__ == "__main__":
+    paths = sys.argv[1:]
     #VERBOSE = True
-    sudokuVision("./antrenare/clasic/01.jpg", "./output.txt", "./antrenare/clasic/01_gt.txt")
+    
+    for path in paths:
+        # extract filename (using os.sep so it works on any platform)
+        filename = path[path.rfind(os.sep) + 1 : path.rfind(".")]
+        cwd = path[:path.rfind(os.sep)]
+        sudokuVision(path, f".{os.sep}output{os.sep}{filename}_predicted.txt", f"{cwd}{os.sep}{filename}_gt1.txt")
