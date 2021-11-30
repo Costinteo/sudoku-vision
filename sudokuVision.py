@@ -206,6 +206,28 @@ def isNewComponent(cell, y, x):
 
     return 0
     
+def isInBounds(position):
+    return 0 <= position[0] and position[0] < 9 and 0 <= position[1] and position[1] < 9
+
+def isValidCell(toCell, direction):
+    """
+    Function decides whether the cell we're travelling to is valid relative to the direction of travel.
+    
+    Parameters:
+       toCell: code returned by isNewComponent() for the cell we're going to
+    direction: string representing direction of travel
+
+    Returns:
+    bool: True if valid cell, False if invalid cell
+    """
+    validCells = {
+        "UP"    : [2, 3],
+        "RIGHT" : [1, 3],
+        "LEFT"  : [1, 3],
+        "DOWN"  : [2, 3]
+    }
+
+    return toCell in validCells[direction]
 
 def markComponents(contourCells):
     """
@@ -218,69 +240,35 @@ def markComponents(contourCells):
     np.array: matrix where each cell is marked with a component number
     """
     
-    # this doesn't work!!!
-    # I need LEE to do it
-    # FUCK THIS
-    # to do:
-    # lee using god damn code matrix
-
-    # current component number
-    compNumber = 1
-    components = np.zeros((9, 9), np.uint8) 
-    showImg(255 - contourCells[5][8])
+    codeMatrix = np.zeros((9, 9), np.uint8)
     for i in range(9):
-        print()
         for j in range(9):
-            code = isNewComponent(contourCells[i][j], i, j)
-            print(code, end = " ")
-            # new component
-            if code == 0:
-                components[i][j] = compNumber
-                compNumber += 1
-            # component same as left
-            elif code == 1:
-                components[i][j] = components[i][j-1]
-            # component same as above
-            elif code == 2:
-                components[i][j] = components[i-1][j]
-            # component is interior or in need of flood
-            elif code == 3:
-                # first we check if flood is needed
-                # by verifying if the leftside cell is different from topside component
-                if components[i][j-1] != components[i-1][j]:
-                    # we flood to overwrite any cells we mistook
-                    # for a new component
-                    newCompValue = min(components[i-1][j], components[i][j-1])
-                    compToFlood = max(components[i-1][j], components[i][j-1])
-    
-                
-                    if components[i-1][j] > components[i][j-1]:
-                        # flood upwards only, special case
-                        for k in range(i - 1, -1, -1):
-                            if components[k][j] != compToFlood:
-                                break
-                            components[k][j] = newCompValue
-                    else:
-                        # start flooding horizontally
-                        for k in range(j - 1, -1, -1):
-                            # start flooding vertically
-                            for l in range(i - 1, -1, -1):
-                                # if we reached vertical end of current component
-                                if components[l][k] != compToFlood:
-                                    break
-                                components[l][k] = newCompValue
-                            # if we reached horizontal end of current component
-                            if components[i][k] != compToFlood:
-                                #print(i, k, compToFlood, newCompValue)
-                                break
-                            components[i][k] = newCompValue
-                    # if we flooded the last component used
-                    # we need to decrement compNumber
-                    compNumber -= 1
-                # we take the above component in all cases
-                components[i][j] = components[i-1][j]
-            #showImg(255 - contourCells[i][j])
-    print()
+            codeMatrix[i][j] = isNewComponent(contourCells[i][j], i, j)
+            print(codeMatrix[i][j], end = " ")
+        print()
+
+    currentComponent = 1
+    components = np.zeros((9, 9), np.uint8)
+    directions = [(-1, 0, "UP"), (0, 1, "RIGHT"), (1, 0, "DOWN"), (0, -1, "LEFT")]
+
+    for i in range(9):
+        for j in range(9):
+            if codeMatrix[i][j] == 0 and components[i][j] == 0:
+                queue = [(i,j)]
+                components[i][j] = currentComponent
+                while len(queue):
+                    currPos = queue[0]
+                    queue.pop(0)
+                    for direction in directions:
+                        strDir = direction[2]
+                        newPos = (currPos[0] + direction[0], currPos[1] + direction[1])
+                        if not isInBounds(newPos) or components[newPos[0]][newPos[1]] != 0:
+                            continue
+                        if isValidCell(codeMatrix[newPos[0]][newPos[1]], strDir):
+                            queue.append(newPos)
+                            components[newPos[0]][newPos[1]] = currentComponent
+                currentComponent += 1
+    print(components)
     return components
 
 def isCorrectlyPredicted(predictedCells, truthPath):
@@ -406,7 +394,6 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
         contourCells = extractCells(eroded)
         # based on the contour cells, generate the matrix with components
         componentMatrix = markComponents(contourCells)
-        print(componentMatrix)
         showImg(eroded)
 
     printInfo(f"Writing to file {outputPath}...")
