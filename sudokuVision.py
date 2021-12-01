@@ -41,18 +41,19 @@ def printInfo(infoString):
 # return a preprocessed image
 def preprocessed(img):
     # getting rid of noise
-    # using Gausian with 9x9 kernel
-    blur = cv.GaussianBlur(img.copy(), (9, 9), 0)
-    # adaptive thresholding of blocksize 11
-    thresh = 255 - cv.adaptiveThreshold(blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2)
+    # using Gausian with 7x7 kernel
+    blur = cv.GaussianBlur(img, (7, 7), 0)
+    # adaptive thresholding of blocksize 15
+    thresh = 255 - cv.adaptiveThreshold(blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 2)
     
     # dilate after Gaussian thresholding
     # we use a cross-shaped kernel to not dilate more than necessary
     # I've tried a square shaped kernel and it left more noise than I'd like
     crossKernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
     # squareKernel = np.ones((3, 3), np.uint8)
-    dilated = cv.dilate(thresh, crossKernel)
     
+    dilated = cv.dilate(thresh, crossKernel)
+
     return dilated
 
 # function returns largest contour from an image
@@ -369,9 +370,9 @@ def sudokuVision(inputPath, outputPath, truthPath):
     printDebug("Approximating polygon...")
     # we get the largest contour in procImg, which will be the sudoku puzzle
     largestContour = getLargestContour(procImg)
-    arc = cv.arcLength(largestContour, True)
+    epsilon = 0.02 * cv.arcLength(largestContour, True)
     # poly will contain an approximate polygon based on the largest contour
-    poly = cv.approxPolyDP(largestContour, 0.015 * arc, True)
+    poly = cv.approxPolyDP(largestContour, epsilon, True)
 
     corners = []
     # we iterate through the poly corners because they are contained in np arrays
@@ -384,19 +385,15 @@ def sudokuVision(inputPath, outputPath, truthPath):
 
     # calculate the bottom side and top side using Euclidean distance
     # used later to warp perspective
-    widthBot = euclideanDistance(botLeft, botRight)
-    widthTop = euclideanDistance(topLeft, topRight)
     # we use the maximum distance to determine the width
     # of the new warped image
-    widthWarp = max(int(widthBot), int(widthTop))
+    widthWarp = max(int(euclideanDistance(botLeft, botRight)), int(euclideanDistance(topLeft, topRight)))
 
     # calculate the left side and right side using Euclidean distance
     # used later to warp perspective
-    heightLeft = euclideanDistance(topLeft, botLeft)
-    heightRight = euclideanDistance(topRight, botRight)
     # we use the maximum distance to determine the height
     # of the new warped image
-    heightWarp = max(int(heightLeft), int(heightRight))
+    heightWarp = max(int(euclideanDistance(topLeft, botLeft)), int(euclideanDistance(topRight, botRight)))
 
     # contains the four corners to which to warp
     newDimensions = np.array([[0, 0], [widthWarp, 0], [widthWarp, heightWarp], [0, heightWarp]], np.float32)
@@ -420,7 +417,7 @@ def sudokuVision(inputPath, outputPath, truthPath):
     cells = extractCells(warpedImg)
     # if mode is JIGSAW we also want to extract the cells
     # after highlighting the components contour
-    eroded = None
+    componentMatrix = None
     if MODE == JIGSAW:
         kernel = np.ones((5, 1), np.uint8)
         # erode vertical lines then horizontal lines
@@ -436,7 +433,7 @@ def sudokuVision(inputPath, outputPath, truthPath):
 
 
     printDebug(f"Writing to file {outputPath}...")
-    predictedValues = writeSolution(cells, outputPath, componentMatrix if MODE != CLASSIC else None)
+    predictedValues = writeSolution(cells, outputPath, componentMatrix if MODE == JIGSAW else None)
     
     if CHECK:
         printInfo("Correct!" if isCorrectlyPredicted(predictedValues, truthPath) else "Incorrect!")
