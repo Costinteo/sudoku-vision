@@ -5,24 +5,26 @@ import sys
 import getopt
 import os
 
+### GLOBAL CONSTANTS ###
+# enum for sides
+TOP   = 0
+BOT   = 1
+LEFT  = 2
+RIGHT = 3
+# for modes
+CLASSIC = "classic"
+JIGSAW  = "jigsaw"
+# counter for correctly predicted solutions
+CORRECT = 0
 # observable means of numbered cells were surely greater than 15
 # observable means of empty cells with noise (after erosion) were less than 1
 # we pick a safety net (> 15) just in case
 NUMBER_CELL_MIN_MEAN = 15
 
-# flags
+### FLAGS ###
 VERBOSE = False
-CLASSIC = "classic"
-JIGSAW  = "jigsaw"
-MODE    = JIGSAW
-
-# enums / global constants
-TOP   = 0
-BOT   = 1
-LEFT  = 2
-RIGHT = 3
-CORRECT = 0
-
+CHECK   = True
+MODE    = CLASSIC
 
 def printInfo(infoString):
     if not VERBOSE:
@@ -151,8 +153,20 @@ def extractCells(img):
     return cells
 
 def writeSolution(cells, outputPath, components = None):
+    """
+    Writes solution to the file passed as argument
+
+    Parameters:
+    cells      : matrix of the predicted cells
+    outputPath : path towards the output file
+    components : separate matrix denoting component (for jigsaw, default is None)
+
+    Returns:
+    list : final predicted values, exactly how they appear in the solution file
+    """
     outputFile = open(outputPath, "w")
     predictedValues = [["" for _ in range(9)] for _ in range(9) ]
+    
     # iterate through the cells
     # write their values to corresponding output file
     for i in range(9):
@@ -164,6 +178,7 @@ def writeSolution(cells, outputPath, components = None):
             predictedValues[i][j] = charToWrite
         if i != 8:
             outputFile.write("\n")
+    
     return predictedValues
 
 def getSides(cell):
@@ -411,8 +426,6 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
         contourCells = extractCells(opened)
         # based on the contour cells, generate the matrix with components
         componentMatrix = markComponents(contourCells)
-        #print(componentMatrix)
-        #showImg(opened)
 
 
     printInfo(f"Writing to file {outputPath}...")
@@ -423,13 +436,50 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     
     printInfo("Done!")
 
+def printHelp():
+    helpString = ""
+    helpString += "Usage: sudokuVision [OPTION]... FILE \n"
+    helpString += "Extract sudoku and output data in a file\n"
+    helpString += "\n"
+    helpString += "Options:\n"
+    helpString += "  -h, --help                Display this help and exit\n"
+    helpString += "  -v, --verbose             Print more info on the steps\n"
+    helpString += "  -c, --check               Check solution against ground truths and count correct guesses\n"
+    helpString += "\n"
+    helpString += "  -m, --mode=<MODE>         Mode to run on [classic, jigsaw]\n"
+    helpString += "  -t, --truth-path=<PATH>   Path to truth files\n"
+    helpString += "                            (if not provided, it looks in the same path as the files to run on)\n"
+    helpString += "  -f <FILES>                Path to the file(s) to run through Sudoku Vision\n"
+    
+    helpString += "\n"
+    helpString += "Written by Costinteo.\n"
+    helpString += "Licensed under GPL v3"
+    print(helpString)
+
 if __name__ == "__main__":
-    paths = sys.argv[1:]
-    #VERBOSE = True
-    MODE = JIGSAW
+    cliOptions, cliArgs = getopt.gnu_getopt(sys.argv[1:], "hvcm:t:f:", ["help", "verbose", "check", "mode=", "truth-path=", "input"])
+    print(cliOptions, cliArgs)
+    
+    paths = cliArgs
+    
+    for flag, arg in cliOptions:
+        print(flag, arg)
+        if flag == "-h" or flag == "--help":
+            printHelp()
+            exit(0)
+        if flag == "-m" or flag == "--mode":
+            arg = arg.lower()
+            if arg == "classic" or arg == "clasic":
+                MODE = CLASSIC
+            elif arg == "jigsaw" or arg == "jig":
+                MODE = JIGSAW
+            else:
+                print("Wrong mode! Check --help")
+
     for path in paths:
         # extract filename (using os.sep so it works on any platform)
         filename = path[path.rfind(os.sep) + 1 : path.rfind(".")]
         cwd = path[:path.rfind(os.sep)]
         sudokuVision(path, f".{os.sep}output{os.sep}{filename}_predicted.txt", f"{cwd}{os.sep}{filename}_gt.txt")
-    print(CORRECT)
+    if CHECK:
+        print(f"{CORRECT}/{len(paths)} correctly guessed.")
