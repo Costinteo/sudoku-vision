@@ -31,7 +31,7 @@ To run jigsaw sudoku puzzles:
 
 Passing the files dynamically through arguments has some advantages. One of them is that you can make use of shell globbing:
 
-``$ ./sudokuVision.py -m classic -t /path/to/truth/dir -o /path/to/output/dir --check --verbose ./train/classic/*.jpg``
+``$ ./sudokuVision.py -m classic ./train/classic/*.jpg``
 
 The above command will run Sudoku Vision on all the .jpg files in ``./train/classic/``.
 
