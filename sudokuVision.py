@@ -23,8 +23,15 @@ NUMBER_CELL_MIN_MEAN = 15
 
 ### FLAGS ###
 VERBOSE = False
-CHECK   = True
-MODE    = CLASSIC
+CHECK   = False
+MODE    = None
+# extra debug flag for development
+DEBUG  = False
+
+def printDebug(debugString):
+    if not DEBUG:
+        return
+    print(debugString)
 
 def printInfo(infoString):
     if not VERBOSE:
@@ -344,8 +351,8 @@ def showImg(img, title="default", timer=0):
     cv.waitKey(timer)
     cv.destroyAllWindows()
 
-def sudokuVision(inputPath, outputPath, truthPath=None):
-    print(f"Running {inputPath} through Sudoku Vision...")
+def sudokuVision(inputPath, outputPath, truthPath):
+    printInfo(f"Running {inputPath} through Sudoku Vision...")
     
 
     img = cv.imread(inputPath, cv.IMREAD_GRAYSCALE)
@@ -356,10 +363,10 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
         print("Unexpected error occured. Make sure you passed a path to an image as argument!")
         exit(1)
 
-    printInfo("Preprocessing image...")
+    printDebug("Preprocessing image...")
     procImg = preprocessed(img)
 
-    printInfo("Approximating polygon...")
+    printDebug("Approximating polygon...")
     # we get the largest contour in procImg, which will be the sudoku puzzle
     largestContour = getLargestContour(procImg)
     arc = cv.arcLength(largestContour, True)
@@ -371,7 +378,7 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     for arr in poly:
         corners.append(list(arr[0]))
     
-    printInfo("Grabbing corners...")
+    printDebug("Grabbing corners...")
     # we call a function to order the corners clockwise, even if picture is rotated
     topLeft, topRight, botLeft, botRight = getCornersOrdered(corners, np.shape(procImg))
 
@@ -396,7 +403,7 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     # corners have to be ordered clockwise (like above) for the warp
     ordCornersArr = np.array([topLeft, topRight, botRight, botLeft], np.float32)
 
-    printInfo("Cropping to sudoku puzzle...")
+    printDebug("Cropping to sudoku puzzle...")
     # needed for warped perspective
     perspective = cv.getPerspectiveTransform(ordCornersArr, newDimensions)
     # very important: we use the unaltered original image
@@ -407,7 +414,7 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     # now we finally have the sudoku puzzle only
     warpedImg = 255 - cv.adaptiveThreshold(warpedImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 201, 1)
     
-    printInfo("Extracting cells...")
+    printDebug("Extracting cells...")
     
     # extract the cells
     cells = extractCells(warpedImg)
@@ -428,42 +435,49 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
         componentMatrix = markComponents(contourCells)
 
 
-    printInfo(f"Writing to file {outputPath}...")
+    printDebug(f"Writing to file {outputPath}...")
     predictedValues = writeSolution(cells, outputPath, componentMatrix if MODE != CLASSIC else None)
     
-    if truthPath:
-        print("Correct!" if isCorrectlyPredicted(predictedValues, truthPath) else "Incorrect!")
+    if CHECK:
+        printInfo("Correct!" if isCorrectlyPredicted(predictedValues, truthPath) else "Incorrect!")
     
     printInfo("Done!")
 
 def printHelp():
     helpString = ""
-    helpString += "Usage: sudokuVision [OPTION]... FILE \n"
-    helpString += "Extract sudoku and output data in a file\n"
+    helpString += "Usage: sudokuVision [OPTION]... FILE\n"
+    helpString += "Extract sudoku from FILE and output data in a .txt file\n"
     helpString += "\n"
     helpString += "Options:\n"
-    helpString += "  -h, --help                Display this help and exit\n"
-    helpString += "  -v, --verbose             Print more info on the steps\n"
-    helpString += "  -c, --check               Check solution against ground truths and count correct guesses\n"
+    helpString += "  -h, --help                 Display this help and exit\n"
+    helpString += "  -v, --verbose              Print more info on the steps\n"
+    helpString += "  -c, --check                Check solution against ground truths and count correct guesses\n"
     helpString += "\n"
-    helpString += "  -m, --mode=<MODE>         Mode to run on [classic, jigsaw]\n"
-    helpString += "  -t, --truth-path=<PATH>   Path to truth files\n"
-    helpString += "                            (if not provided, it looks in the same path as the files to run on)\n"
-    helpString += "  -f <FILES>                Path to the file(s) to run through Sudoku Vision\n"
-    
+    helpString += "  -m, --mode=<MODE>          Mode to run on [classic, jigsaw]\n"
+    helpString += "  -t, --truth-path=<PATH>    Path to directory containing truth files\n"
+    helpString += "                             (if not provided, it looks in the same path as the files to run on)\n"
+    helpString += "  -o, --output-path=<PATH>   Path to directory to write solutions in\n"
+    helpString += "                             (if not provided, it creates an output dir in the current dir)\n"
     helpString += "\n"
-    helpString += "Written by Costinteo.\n"
-    helpString += "Licensed under GPL v3"
+    helpString += "Written by Costinteo for Concepts and Applications in Computer Vision course.\n"
+    helpString += "University of Bucharest, Faculty of Mathematics and Informatics.\n"
+    helpString += "Licensed under GPL v3. For more information, access: <https://github.com/Costinteo/>"
     print(helpString)
 
 if __name__ == "__main__":
-    cliOptions, cliArgs = getopt.gnu_getopt(sys.argv[1:], "hvcm:t:f:", ["help", "verbose", "check", "mode=", "truth-path=", "input"])
-    print(cliOptions, cliArgs)
+    
+    cliOptions, cliArgs = getopt.gnu_getopt(sys.argv[1:], "hvcm:t:o:", ["help", "verbose", "check", "mode=", "truth-path=", "output-path="])
     
     paths = cliArgs
-    
+    truthPath = None
+    outputPath = None
+
+    if not len(cliOptions):
+        printHelp()
+        exit(1)
+
     for flag, arg in cliOptions:
-        print(flag, arg)
+
         if flag == "-h" or flag == "--help":
             printHelp()
             exit(0)
@@ -474,12 +488,43 @@ if __name__ == "__main__":
             elif arg == "jigsaw" or arg == "jig":
                 MODE = JIGSAW
             else:
-                print("Wrong mode! Check --help")
+                print("Wrong mode! See --help for usage.")
+        elif flag == "-c" or flag == "--check":
+            CHECK = True
+        elif flag == "-v" or flag == "--verbose":
+            VERBOSE = True
+        elif flag == "-t" or flag == "--truth-path":
+            truthPath = arg
+        elif flag == "-o" or flag == "--output-path":
+            outputPath = arg
+        
+
+    if not MODE:
+        print("Please input mode to run in. See --help for usage.")
+        exit(1)
+
+    if not len(cliArgs):
+        print("Please input the files to run Sudoku Vision on. See --help for usage.")
+        exit(1)
 
     for path in paths:
+        
         # extract filename (using os.sep so it works on any platform)
         filename = path[path.rfind(os.sep) + 1 : path.rfind(".")]
         cwd = path[:path.rfind(os.sep)]
-        sudokuVision(path, f".{os.sep}output{os.sep}{filename}_predicted.txt", f"{cwd}{os.sep}{filename}_gt.txt")
+        
+        # deduce the truth path if not specified and if asked to check solution
+        if not truthPath and CHECK:
+            truthPath = f"{cwd}"
+        
+        # use default output path if not specified
+        if not outputPath:
+            outputPath = f".{os.sep}sudoku-output"
+            # make sure the directory doesn't already exist
+            if not os.path.isdir(outputPath) and not os.path.isfile(outputPath):
+                os.mkdir(outputPath)
+
+        sudokuVision(path, f"{outputPath}{os.sep}{filename}_predicted.txt", f"{truthPath}{os.sep}{filename}_gt.txt")
+    
     if CHECK:
         print(f"{CORRECT}/{len(paths)} correctly guessed.")
