@@ -10,10 +10,19 @@ import os
 # we pick a safety net (> 15) just in case
 NUMBER_CELL_MIN_MEAN = 15
 
+# flags
 VERBOSE = False
 CLASSIC = "classic"
-JIGSAW = "jigsaw"
-MODE = JIGSAW
+JIGSAW  = "jigsaw"
+MODE    = JIGSAW
+
+# enums / global constants
+TOP   = 0
+BOT   = 1
+LEFT  = 2
+RIGHT = 3
+CORRECT = 0
+
 
 def printInfo(infoString):
     if not VERBOSE:
@@ -157,77 +166,78 @@ def writeSolution(cells, outputPath, components = None):
             outputFile.write("\n")
     return predictedValues
 
-def isNewComponent(cell, y, x):
+def getSides(cell):
     """
-    Decides if cell passed as arg is a part of a new component or not
+    Checks cell's sides and marks existing sides
 
     Parameters:
     cell: the cell in question
-       y: the y position in the matrix
-       x: the x position in the matrix
 
     Returns:
-    int: 0 if it's a new component
-         1 if it's a part of the left one
-         2 if it's a part of the above one
-         3 if it's a part of both left and above
+    bool dict: a dictionary of 4 elements containing True/False
+               corresponding to whether or not the cell has that side
+               keys -> (TOP, RIGHT, BOT, LEFT)
     """
 
     cellHeight, cellWidth = np.shape(cell)
+    
+    sides = {
+        TOP   : False,
+        RIGHT : False,
+        BOT   : False,
+        LEFT  : False
+    }
 
     leftSideSum = 0
+    rightSideSum = 0
     topSideSum = 0
+    botSideSum = 0
 
-    noLeft = False
-    noTop = False
-    
+    # basically how many lines to check
+    # we divide the width / height to this variable to find the nth part of the cell
+    nthPartDiv = 8
+
     # the thick contours will remain in the cells once extracted
     # we can use this to determine the thick contours positions relative to the cell
-    # we sum up the pixels that are a part of the contour to determine if there's a contour
-    # then we use this to determine if the cell is part of a new component or not
+    # we sum up the pixels that are a part of the contour to determine if there's a contour on that side
     for k in range(cellHeight):
-        leftSideSum += np.sum(cell[k][:cellWidth // 7]) // 255
+        leftSideSum += np.sum(cell[k][:cellWidth // nthPartDiv]) // 255
+        rightSideSum += np.sum(cell[k][cellWidth - cellWidth // nthPartDiv - 1:]) // 255
 
-    for k in range(cellHeight // 7):
+    for k in range(cellHeight // nthPartDiv):
         topSideSum += np.sum(cell[k]) // 255
-
-    if leftSideSum < cellHeight and x > 0:
-        noLeft = True
-
-    if topSideSum < cellWidth and y > 0:
-        noTop = True
-
-    if noLeft and noTop:
-        return 3
-    elif noLeft:
-        return 1
-    elif noTop:
-        return 2
-
-    return 0
+        botSideSum += np.sum(cell[cellHeight - k - 1]) // 255
+    sides[LEFT]  = leftSideSum  > cellHeight
+    sides[TOP]   = topSideSum   > cellWidth
+    sides[RIGHT] = rightSideSum > cellWidth
+    sides[BOT]   = botSideSum   > cellHeight
+ 
+    return sides
     
 def isInBounds(position):
     return 0 <= position[0] and position[0] < 9 and 0 <= position[1] and position[1] < 9
 
-def isValidCell(toCell, direction):
+def isValidCell(fromCellSides, toCellSides, direction):
     """
     Function decides whether the cell we're travelling to is valid relative to the direction of travel.
     
     Parameters:
-       toCell: code returned by isNewComponent() for the cell we're going to
-    direction: string representing direction of travel
+    fromCellSides : tuple returned by getSides() for the cell we're travelling from 
+    toCellSides   : tuple returned by getSides() for the cell we're going to travel to
+    direction     : int representing the direction of travel
 
     Returns:
     bool: True if valid cell, False if invalid cell
     """
-    validCells = {
-        "UP"    : [2, 3],
-        "RIGHT" : [1, 3],
-        "LEFT"  : [1, 3],
-        "DOWN"  : [2, 3]
-    }
+    # the ints for direction are specially picked so when inverted this wait
+    # they will have the corresponding value to the opposed direction
+    sideToCheck = direction ^ 1
 
-    return toCell in validCells[direction]
+    # cell is valid only if it doesn't have a contour on that side, so our flood can continue to it
+    # we also check if our current cell has a contour on that side
+    return not toCellSides[sideToCheck] and not fromCellSides[direction]
+
+       
 
 def markComponents(contourCells):
     """
@@ -239,36 +249,38 @@ def markComponents(contourCells):
     Returns:
     np.array: matrix where each cell is marked with a component number
     """
-    
-    codeMatrix = np.zeros((9, 9), np.uint8)
+    sidesMatrix = [[{} for _ in range(9)] for _ in range(9)]
+    #print("[TOP, RIGHT, BOT, LEFT]")
     for i in range(9):
         for j in range(9):
-            codeMatrix[i][j] = isNewComponent(contourCells[i][j], i, j)
-            print(codeMatrix[i][j], end = " ")
-        print()
-
+            sidesMatrix[i][j] =  getSides(contourCells[i][j])
+            #print(f"[{int(sidesMatrix[i][j][TOP])},{int(sidesMatrix[i][j][RIGHT])},{int(sidesMatrix[i][j][BOT])},{int(sidesMatrix[i][j][LEFT])}]", end = " ")
+        #print()
     currentComponent = 1
     components = np.zeros((9, 9), np.uint8)
-    directions = [(-1, 0, "UP"), (0, 1, "RIGHT"), (1, 0, "DOWN"), (0, -1, "LEFT")]
-
+    directions = [(-1, 0, TOP), (0, 1, RIGHT), (1, 0, BOT), (0, -1, LEFT)]
+    
+    # basically breadth-first search
     for i in range(9):
         for j in range(9):
-            if codeMatrix[i][j] == 0 and components[i][j] == 0:
+            if components[i][j] == 0:
                 queue = [(i,j)]
                 components[i][j] = currentComponent
                 while len(queue):
                     currPos = queue[0]
                     queue.pop(0)
                     for direction in directions:
-                        strDir = direction[2]
+                        literalDir = direction[2]
                         newPos = (currPos[0] + direction[0], currPos[1] + direction[1])
+                        # if new pos is not in bounds or it's already visited
                         if not isInBounds(newPos) or components[newPos[0]][newPos[1]] != 0:
                             continue
-                        if isValidCell(codeMatrix[newPos[0]][newPos[1]], strDir):
+                        
+                        # if we can travel in that direction
+                        if isValidCell(sidesMatrix[currPos[0]][currPos[1]], sidesMatrix[newPos[0]][newPos[1]], literalDir):                      
                             queue.append(newPos)
                             components[newPos[0]][newPos[1]] = currentComponent
                 currentComponent += 1
-    print(components)
     return components
 
 def isCorrectlyPredicted(predictedCells, truthPath):
@@ -276,12 +288,14 @@ def isCorrectlyPredicted(predictedCells, truthPath):
     Checks predicted solution against real solution.
 
     Parameters:
-    predictedCells: matrix of the predicted sudoku puzzle configuration
-         truthPath: path to the true sudoku puzzle configuration
+    predictedCells : matrix of the predicted sudoku puzzle configuration
+    truthPath      : path to the true sudoku puzzle configuration
 
     Returns:
     bool: True if correct, False if incorrect
     """
+    global CORRECT
+
     try:
         truthFile = open(truthPath, "r")
     except:
@@ -305,6 +319,8 @@ def isCorrectlyPredicted(predictedCells, truthPath):
                     print(f"Predicted: {predictedCells[i][j]}")
                     print(f"Truth: {truthCells[i][j]}")
                 return False
+    
+    CORRECT += 1
     return True
 
 # function that shows image
@@ -368,6 +384,7 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     printInfo("Cropping to sudoku puzzle...")
     # needed for warped perspective
     perspective = cv.getPerspectiveTransform(ordCornersArr, newDimensions)
+    # very important: we use the unaltered original image
     warpedImg = cv.warpPerspective(img, perspective, (widthWarp, heightWarp))
 
     # finally threshold and invert the warped image
@@ -375,8 +392,6 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     # now we finally have the sudoku puzzle only
     warpedImg = 255 - cv.adaptiveThreshold(warpedImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 201, 1)
     
-    #showImg(255 -warpedImg)
-
     printInfo("Extracting cells...")
     
     # extract the cells
@@ -385,16 +400,20 @@ def sudokuVision(inputPath, outputPath, truthPath=None):
     # after highlighting the components contour
     eroded = None
     if MODE == JIGSAW:
-        dilated = cv.dilate(warpedImg, np.ones((2, 2), np.uint8))
-        kernel = np.ones((6, 1), np.uint8)
+        kernel = np.ones((5, 1), np.uint8)
         # erode vertical lines then horizontal lines
-        eroded = cv.erode(dilated, kernel)
+        eroded = cv.erode(warpedImg, kernel)
         eroded = cv.erode(eroded, np.transpose(kernel))
+        
+        # open up
+        opened = cv.dilate(eroded, np.ones((3, 3), np.uint8))
         # extract the contour cells
-        contourCells = extractCells(eroded)
+        contourCells = extractCells(opened)
         # based on the contour cells, generate the matrix with components
         componentMatrix = markComponents(contourCells)
-        showImg(eroded)
+        #print(componentMatrix)
+        #showImg(opened)
+
 
     printInfo(f"Writing to file {outputPath}...")
     predictedValues = writeSolution(cells, outputPath, componentMatrix if MODE != CLASSIC else None)
@@ -413,3 +432,4 @@ if __name__ == "__main__":
         filename = path[path.rfind(os.sep) + 1 : path.rfind(".")]
         cwd = path[:path.rfind(os.sep)]
         sudokuVision(path, f".{os.sep}output{os.sep}{filename}_predicted.txt", f"{cwd}{os.sep}{filename}_gt.txt")
+    print(CORRECT)
