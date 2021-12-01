@@ -458,7 +458,7 @@ def printHelp():
     helpString += "\n"
     helpString += "Written by Costinteo for Concepts and Applications in Computer Vision course.\n"
     helpString += "University of Bucharest, Faculty of Mathematics and Informatics.\n"
-    helpString += "Licensed under GPL v3. For more information, access: <https://github.com/Costinteo/>"
+    helpString += "Licensed under GPL v3. For more information, access: <https://github.com/Costinteo/sudoku-vision/>"
     print(helpString)
 
 if __name__ == "__main__":
